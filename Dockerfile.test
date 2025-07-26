@@ -15,18 +15,17 @@ RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/
 RUN ssh-keygen -A
 
 COPY --from=builder /app/qssh-server /usr/local/bin/qssh-server
-COPY server/config.example.toml /etc/qssh/config.toml
+COPY testdata/config.toml /etc/qssh/config.toml
+COPY testdata/config-mtls.toml /etc/qssh/config-mtls.toml
 
-RUN apk add --no-cache openssl
-RUN openssl req -x509 -newkey rsa:4096 -keyout /etc/qssh/server.key -out /etc/qssh/server.crt -days 365 -nodes -subj "/C=US/ST=Test/L=Test/O=Test/CN=localhost"
+COPY testdata/server.crt /etc/qssh/server.crt
+COPY testdata/server.key /etc/qssh/server.key
+COPY testdata/ca.crt /etc/qssh/ca.crt
+COPY testdata/entrypoint.sh /start.sh
 
-# Create startup script
-RUN echo '#!/bin/sh' > /start.sh && \
-    echo '/usr/sbin/sshd' >> /start.sh && \
-    echo 'sleep 2' >> /start.sh && \
-    echo 'cd /etc/qssh && /usr/local/bin/qssh-server -config-file /etc/qssh/config.toml' >> /start.sh && \
-    chmod +x /start.sh
+RUN chmod +x /start.sh
 
 EXPOSE 22 4433/udp
 
-CMD ["/start.sh"]
+ENTRYPOINT ["/start.sh"]
+CMD ["/etc/qssh/config.toml"]

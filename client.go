@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
+	"io/ioutil"
 	"net"
 	"time"
 
@@ -116,4 +118,40 @@ func KeyConfig(user string, privateKey ssh.Signer) *Config {
 	return DefaultConfig(user, []ssh.AuthMethod{
 		ssh.PublicKeys(privateKey),
 	})
+}
+
+// WithClientCert adds client certificate authentication to the TLS config for mTLS
+func (c *Config) WithClientCert(certFile, keyFile string) error {
+	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+	if err != nil {
+		return fmt.Errorf("failed to load client certificate: %w", err)
+	}
+
+	if c.TLSConfig == nil {
+		c.TLSConfig = &tls.Config{}
+	}
+
+	c.TLSConfig.Certificates = append(c.TLSConfig.Certificates, cert)
+	return nil
+}
+
+// WithServerCA adds server CA verification to the TLS config
+func (c *Config) WithServerCA(caFile string) error {
+	caCert, err := ioutil.ReadFile(caFile)
+	if err != nil {
+		return fmt.Errorf("failed to read server CA file: %w", err)
+	}
+
+	caCertPool := x509.NewCertPool()
+	if !caCertPool.AppendCertsFromPEM(caCert) {
+		return fmt.Errorf("failed to parse server CA certificate")
+	}
+
+	if c.TLSConfig == nil {
+		c.TLSConfig = &tls.Config{}
+	}
+
+	c.TLSConfig.RootCAs = caCertPool
+	c.TLSConfig.InsecureSkipVerify = false
+	return nil
 }

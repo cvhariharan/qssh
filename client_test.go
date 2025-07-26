@@ -17,6 +17,14 @@ type testContainer struct {
 }
 
 func setupTestContainer(t *testing.T) *testContainer {
+	return setupTestContainerWithConfig(t, "/etc/qssh/config.toml")
+}
+
+func setupTestContainerWithMTLS(t *testing.T) *testContainer {
+	return setupTestContainerWithConfig(t, "/etc/qssh/config-mtls.toml")
+}
+
+func setupTestContainerWithConfig(t *testing.T, configPath string) *testContainer {
 	ctx := context.Background()
 
 	req := testcontainers.ContainerRequest{
@@ -25,6 +33,7 @@ func setupTestContainer(t *testing.T) *testContainer {
 			Dockerfile: "Dockerfile.test",
 		},
 		ExposedPorts: []string{"22/tcp", "4433/udp"},
+		Cmd:          []string{configPath},
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
@@ -128,7 +137,6 @@ func testDialIntegration(t *testing.T, ctx context.Context) {
 	config := PasswordConfig("testuser", "testpass")
 	addr := tc.host + ":" + tc.port
 
-	// Only for testing
 	config.SSHConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey()
 
 	var client *ssh.Client
@@ -215,5 +223,119 @@ func TestConfigWithCustomTLS(t *testing.T) {
 
 	if config.TLSConfig.ServerName != "localhost" {
 		t.Errorf("Expected ServerName 'localhost', got '%s'", config.TLSConfig.ServerName)
+	}
+}
+
+func TestWithClientCert(t *testing.T) {
+	config := PasswordConfig("testuser", "testpass")
+
+	err := config.WithClientCert("testdata/client.crt", "testdata/client.key")
+	if err != nil {
+		t.Fatalf("Failed to add client certificate: %v", err)
+	}
+
+	if len(config.TLSConfig.Certificates) != 1 {
+		t.Errorf("Expected 1 client certificate, got %d", len(config.TLSConfig.Certificates))
+	}
+}
+
+func TestWithClientCertInvalidFiles(t *testing.T) {
+	config := PasswordConfig("testuser", "testpass")
+
+	err := config.WithClientCert("nonexistent.crt", "nonexistent.key")
+	if err == nil {
+		t.Error("Expected error for nonexistent certificate files")
+	}
+}
+
+func TestWithServerCA(t *testing.T) {
+	config := PasswordConfig("testuser", "testpass")
+
+	err := config.WithServerCA("testdata/ca.crt")
+	if err != nil {
+		t.Fatalf("Failed to add server CA: %v", err)
+	}
+
+	if config.TLSConfig.RootCAs == nil {
+		t.Error("Expected RootCAs to be set")
+	}
+
+	if config.TLSConfig.InsecureSkipVerify {
+		t.Error("Expected InsecureSkipVerify to be false after adding CA")
+	}
+}
+
+func TestWithServerCAInvalidFile(t *testing.T) {
+	config := PasswordConfig("testuser", "testpass")
+
+	err := config.WithServerCA("nonexistent.crt")
+	if err == nil {
+		t.Error("Expected error for nonexistent CA file")
+	}
+}
+
+func TestMTLSIntegration(t *testing.T) {
+	tc := setupTestContainerWithMTLS(t)
+	defer tc.cleanup(t)
+
+	config := PasswordConfig("testuser", "testpass")
+	addr := tc.host + ":" + tc.port
+
+	// Configure mTLS
+	err := config.WithClientCert("testdata/client.crt", "testdata/client.key")
+	if err != nil {
+		t.Fatalf("Failed to add client certificate: %v", err)
+	}
+
+	err = config.WithServerCA("testdata/ca.crt")
+	if err != nil {
+		t.Fatalf("Failed to add server CA: %v", err)
+	}
+
+	config.SSHConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey()
+
+	client, conn, err := Dial(addr, config)
+	if err != nil {
+		t.Fatalf("Failed to dial with mTLS: %v", err)
+	}
+	defer client.Close()
+	defer conn.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		t.Fatalf("Failed to create session: %v", err)
+	}
+	defer session.Close()
+
+	output, err := session.Output("echo mtls_test")
+	if err != nil {
+		t.Fatalf("Failed to run command: %v", err)
+	}
+
+	if string(output) != "mtls_test\n" {
+		t.Errorf("Expected 'mtls_test\\n', got '%s'", string(output))
+	}
+}
+
+func TestMTLSIntegrationWithoutClientCert(t *testing.T) {
+	tc := setupTestContainerWithMTLS(t)
+	defer tc.cleanup(t)
+
+	config := PasswordConfig("testuser", "testpass")
+	addr := tc.host + ":" + tc.port
+
+	// Configure server CA but no client certificate
+	err := config.WithServerCA("testdata/ca.crt")
+	if err != nil {
+		t.Fatalf("Failed to add server CA: %v", err)
+	}
+
+	// Only for testing
+	config.SSHConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey()
+
+	// This should fail because server requires mTLS but client doesn't provide certificate
+	_, _, err = Dial(addr, config)
+	if err == nil {
+		t.Error("Expected error when connecting without client certificate to mTLS-enabled server")
 	}
 }

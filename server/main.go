@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
@@ -27,8 +29,10 @@ type Config struct {
 	} `koanf:"server"`
 
 	TLS struct {
-		CertFile string `koanf:"cert_file"`
-		KeyFile  string `koanf:"key_file"`
+		CertFile   string `koanf:"cert_file"`
+		KeyFile    string `koanf:"key_file"`
+		ClientCA   string `koanf:"client_ca"`
+		RequireMTLS bool   `koanf:"require_mtls"`
 	} `koanf:"tls"`
 
 	QUIC struct {
@@ -54,7 +58,7 @@ func main() {
 		log.Fatalf("Failed to load config: %v", err)
 	}
 
-	tlsConf, err := loadTLSConfig(config.TLS.CertFile, config.TLS.KeyFile)
+	tlsConf, err := loadTLSConfig(config.TLS)
 	if err != nil {
 		log.Fatalf("Failed to load TLS config: %v", err)
 	}
@@ -196,13 +200,18 @@ func (s *Server) handleConnection(qConn *quic.Conn) {
 	wg.Wait()
 }
 
-func loadTLSConfig(certFile, keyFile string) (*tls.Config, error) {
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
+func loadTLSConfig(tlsConfig struct {
+	CertFile   string `koanf:"cert_file"`
+	KeyFile    string `koanf:"key_file"`
+	ClientCA   string `koanf:"client_ca"`
+	RequireMTLS bool   `koanf:"require_mtls"`
+}) (*tls.Config, error) {
+	cert, err := tls.LoadX509KeyPair(tlsConfig.CertFile, tlsConfig.KeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load certificate: %w", err)
 	}
 
-	return &tls.Config{
+	config := &tls.Config{
 		Certificates: []tls.Certificate{cert},
 		MinVersion:   tls.VersionTLS13,
 		CipherSuites: []uint16{
@@ -211,5 +220,22 @@ func loadTLSConfig(certFile, keyFile string) (*tls.Config, error) {
 			tls.TLS_CHACHA20_POLY1305_SHA256,
 		},
 		PreferServerCipherSuites: true,
-	}, nil
+	}
+
+	if tlsConfig.RequireMTLS && tlsConfig.ClientCA != "" {
+		caCert, err := ioutil.ReadFile(tlsConfig.ClientCA)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read client CA file: %w", err)
+		}
+
+		caCertPool := x509.NewCertPool()
+		if !caCertPool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("failed to parse client CA certificate")
+		}
+
+		config.ClientAuth = tls.RequireAndVerifyClientCert
+		config.ClientCAs = caCertPool
+	}
+
+	return config, nil
 }

@@ -8,9 +8,6 @@ ssh_addr = "127.0.0.1:22"
 [tls]
 cert_file = "/etc/qssh/server.crt"
 key_file = "/etc/qssh/server.key"
-# Optional: Enable mutual TLS (mTLS) for client authentication
-# client_ca = "/etc/qssh/client-ca.crt"
-# require_mtls = false
 
 [quic]
 max_idle_timeout = 30
