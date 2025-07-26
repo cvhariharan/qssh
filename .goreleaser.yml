@@ -1,0 +1,29 @@
+version: 2
+
+env:
+  - CGO_ENABLED=0
+builds:
+  - binary: qssh-server
+    id: qssh-server
+    main: ./main.go
+    dir: ./server
+    goos:
+      - linux
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w
+  - binary: qssh-client
+    id: qssh-client
+    main: ./cmd/client
+    goos:
+      - linux
+    goarch:
+      - amd64
+    ldflags:
+      - -s -w
+archives:
+  - formats: [tar.gz]
+    files:
+      - README.md
+      - LICENSE
