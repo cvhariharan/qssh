@@ -6,8 +6,8 @@ quic_addr = ":4433"
 ssh_addr = "127.0.0.1:22"
 
 [tls]
-cert_file = "server.crt"
-key_file = "server.key"
+cert_file = "/etc/qssh/server.crt"
+key_file = "/etc/qssh/server.key"
 
 [quic]
 max_idle_timeout = 30

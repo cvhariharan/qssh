@@ -1,0 +1,32 @@
+FROM golang:1.24-alpine AS builder
+
+WORKDIR /app
+COPY server /app
+RUN go build -o qssh-server
+
+FROM alpine:3.22
+
+RUN apk add --no-cache openssh
+RUN adduser -D -s /bin/sh testuser
+RUN echo 'testuser:testpass' | chpasswd
+RUN mkdir -p /etc/qssh
+
+RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+RUN ssh-keygen -A
+
+COPY --from=builder /app/qssh-server /usr/local/bin/qssh-server
+COPY server/config.example.toml /etc/qssh/config.toml
+
+RUN apk add --no-cache openssl
+RUN openssl req -x509 -newkey rsa:4096 -keyout /etc/qssh/server.key -out /etc/qssh/server.crt -days 365 -nodes -subj "/C=US/ST=Test/L=Test/O=Test/CN=localhost"
+
+# Create startup script
+RUN echo '#!/bin/sh' > /start.sh && \
+    echo '/usr/sbin/sshd' >> /start.sh && \
+    echo 'sleep 2' >> /start.sh && \
+    echo 'cd /etc/qssh && /usr/local/bin/qssh-server -config-file /etc/qssh/config.toml' >> /start.sh && \
+    chmod +x /start.sh
+
+EXPOSE 22 4433/udp
+
+CMD ["/start.sh"]

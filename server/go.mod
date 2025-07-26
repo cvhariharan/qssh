@@ -1,6 +1,6 @@
 module github.com/cvhariharan/qssh/server
 
-go 1.24.4
+go 1.24.5
 
 require (
 	github.com/knadh/koanf/parsers/toml v0.1.0

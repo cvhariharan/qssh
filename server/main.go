@@ -12,6 +12,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"flag"
 
 	"github.com/knadh/koanf/parsers/toml"
 	"github.com/knadh/koanf/providers/file"
@@ -45,7 +46,10 @@ type Server struct {
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
-	config, err := loadConfig("config.toml")
+	configPath := flag.String("config-file", "config.toml", "Path to config file")
+	flag.Parse()
+
+	config, err := loadConfig(*configPath)
 	if err != nil {
 		log.Fatalf("Failed to load config: %v", err)
 	}
