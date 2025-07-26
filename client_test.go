@@ -1,4 +1,4 @@
-package main
+package qssh
 
 import (
 	"context"
@@ -137,6 +137,7 @@ func testDialIntegration(t *testing.T, ctx context.Context) {
 	config := PasswordConfig("testuser", "testpass")
 	addr := tc.host + ":" + tc.port
 
+	// Only for testing
 	config.SSHConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey()
 
 	var client *ssh.Client
