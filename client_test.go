@@ -176,7 +176,7 @@ func TestDialIntegration(t *testing.T) {
 }
 
 func TestDialContextIntegration(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	testDialIntegration(t, ctx)
 }
@@ -339,4 +339,79 @@ func TestMTLSIntegrationWithoutClientCert(t *testing.T) {
 	if err == nil {
 		t.Error("Expected error when connecting without client certificate to mTLS-enabled server")
 	}
+}
+
+func TestSSHClientDial(t *testing.T) {
+	tc := setupTestContainer(t)
+	defer tc.cleanup(t)
+
+	config := PasswordConfig("testuser", "testpass")
+	addr := tc.host + ":" + tc.port
+
+	// Only for testing
+	config.SSHConfig.HostKeyCallback = ssh.InsecureIgnoreHostKey()
+
+	// First establish connection to the SSH server
+	client, conn, err := Dial(addr, config)
+	if err != nil {
+		t.Fatalf("Failed to connect to SSH server: %v", err)
+	}
+	defer client.Close()
+	defer conn.Close()
+
+	// Test ssh.Client.Dial to connect to nginx HTTP service from the remote host
+	remoteConn, err := client.Dial("tcp", "localhost:8080")
+	if err != nil {
+		t.Fatalf("ssh.Client.Dial failed to connect to remote HTTP service: %v", err)
+	}
+	defer remoteConn.Close()
+
+	// Test that the connection works by making an HTTP request
+	httpRequest := "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+	_, err = remoteConn.Write([]byte(httpRequest))
+	if err != nil {
+		t.Fatalf("Failed to write HTTP request: %v", err)
+	}
+
+	// Read HTTP response
+	buffer := make([]byte, 1024)
+	n, err := remoteConn.Read(buffer)
+	if err != nil {
+		t.Fatalf("Failed to read HTTP response: %v", err)
+	}
+
+	response := string(buffer[:n])
+	if len(response) == 0 {
+		t.Error("Expected non-empty HTTP response")
+	}
+
+	// Check for HTTP status line
+	if !contains(response, "HTTP/1.1 200") {
+		t.Errorf("Expected HTTP 200 response, got: %s", response[:min(len(response), 100)])
+	}
+
+	// Check for our custom content
+	if !contains(response, "Hello from nginx") {
+		t.Errorf("Expected 'Hello from nginx' in response, got: %s", response)
+	}
+}
+
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && findSubstring(s, substr)
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }

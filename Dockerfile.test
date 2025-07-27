@@ -6,12 +6,16 @@ RUN go build -o qssh-server
 
 FROM alpine:3.22
 
-RUN apk add --no-cache openssh
+RUN apk add --no-cache openssh nginx
 RUN adduser -D -s /bin/sh testuser
 RUN echo 'testuser:testpass' | chpasswd
 RUN mkdir -p /etc/qssh
 
-RUN sed -i 's/#PasswordAuthentication yes/PasswordAuthentication yes/' /etc/ssh/sshd_config
+RUN sed -i 's/AllowTcpForwarding no/AllowTcpForwarding yes/' /etc/ssh/sshd_config
+RUN echo 'PasswordAuthentication yes' /etc/ssh/sshd_config
+RUN echo 'AllowStreamLocalForwarding yes' >> /etc/ssh/sshd_config
+RUN echo 'GatewayPorts yes' >> /etc/ssh/sshd_config
+RUN echo 'PermitOpen any' >> /etc/ssh/sshd_config
 RUN ssh-keygen -A
 
 COPY --from=builder /app/qssh-server /usr/local/bin/qssh-server
@@ -23,9 +27,13 @@ COPY testdata/server.key /etc/qssh/server.key
 COPY testdata/ca.crt /etc/qssh/ca.crt
 COPY testdata/entrypoint.sh /start.sh
 
+# Setup nginx
+RUN echo 'Hello from nginx' > /var/lib/nginx/html/index.html
+RUN echo 'server { listen 8080; location / { root /var/lib/nginx/html; } }' > /etc/nginx/http.d/default.conf
+
 RUN chmod +x /start.sh
 
-EXPOSE 22 4433/udp
+EXPOSE 22 4433/udp 8080
 
 ENTRYPOINT ["/start.sh"]
 CMD ["/etc/qssh/config.toml"]
