@@ -1,3 +1,5 @@
+<a href="https://zerodha.tech"><img src="https://zerodha.tech/static/images/github-badge.svg" /></a>
+
 # QSSH - QUIC SSH Proxy
 
 QSSH is a Go library and tool that provides SSH connections over QUIC transport, improving SSH reliability and performance over low-quality network connections.
