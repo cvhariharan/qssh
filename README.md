@@ -11,15 +11,50 @@ QSSH is a Go library and tool that provides SSH connections over QUIC transport,
 - SSH ProxyCommand support
 - Works with existing SSH authentication methods. Client library returns a standard ssh.Client making it easy to use with existing packages transparently.
 
-## Installation
+## QSSH Server
 
-```bash
-go get github.com/cvhariharan/qssh
+QSSH requires a compatible QSSH server running on the target node. The server acts as the QUIC-to-SSH proxy and forwards connections to the local SSH daemon.
+
+### Installing the Server
+
+Get the latest release from [releases](https://github.com/cvhariharan/qssh/releases). You can use the provided [systemd](qssh-server.service) unit file to install QSSH server as a systemd service. Just place the qssh-server binary in `/usr/local/bin/qssh-server` and the config file in `/etc/qssh-config.toml`.
+
+### Server Configuration
+
+The server uses a TOML configuration file. Create a `config.toml` file based on the example:
+
+```toml
+[server]
+# QUIC server listen address
+quic_addr = ":4433"
+
+# SSH server to forward connections to
+ssh_addr = "127.0.0.1:22"
+
+[tls]
+cert_file = "/etc/qssh/server.crt"
+key_file = "/etc/qssh/server.key"
+
+# If generate_certs is true, if the cert and key file don't exist, they will be generated
+generate_certs = true
+
+# Optional: Enable mutual TLS (mTLS) for client authentication
+# client_ca = "/etc/qssh/client-ca.crt"
+# require_mtls = false
+
+[quic]
+max_idle_timeout = 30
+max_incoming_streams = 100
+keep_alive_period = 10
 ```
 
-## Usage
+### Running the Server
 
-### As a Library
+```bash
+./server -config-file /path/to/config.toml
+```
+
+## Usage as a Library
 
 #### Basic SSH Client
 
@@ -86,22 +121,18 @@ client, conn, err := qssh.Dial("server:8080", config)
 
 ### As SSH ProxyCommand
 
-Build the client:
+Download the latest release from [releases](https://github.com/cvhariharan/qssh/releases) and extract the `qssh-client` binary.
 
-```bash
-go build -o qssh-client ./cmd/client
-```
-
-Configure SSH to use QSSH as a proxy:
+Configure SSH to use QSSH client as a proxy:
 
 ```
 # ~/.ssh/config
 Host myserver
-    ProxyCommand qssh-client qssh-server.example.com:4433
+    ProxyCommand /usr/local/bin/qssh-client qssh-server.example.com:4433
     Hostname target-server.internal
 ```
 
-Then connect normally:
+Connect using SSH
 
 ```bash
 ssh myserver
@@ -116,61 +147,3 @@ err := qssh.Proxy(ctx, "proxy-server:8080", qssh.ProxyConfig{
     TLSConfig: &tls.Config{InsecureSkipVerify: true},
 }, os.Stdin, os.Stdout)
 ```
-
-## QSSH Server
-
-QSSH requires a compatible QSSH server running on the target node. The server handles the QUIC-to-SSH translation and forwards connections to the local SSH daemon.
-
-### Installing the Server
-
-```bash
-go install github.com/cvhariharan/qssh/server@latest
-```
-
-Or build from source:
-
-```bash
-go build ./server
-```
-
-### Server Configuration
-
-The server uses a TOML configuration file. Create a `config.toml` file based on the example:
-
-```toml
-[server]
-# QUIC server listen address
-quic_addr = ":4433"
-
-# SSH server to forward connections to
-ssh_addr = "127.0.0.1:22"
-
-[tls]
-cert_file = "/etc/qssh/server.crt"
-key_file = "/etc/qssh/server.key"
-# Optional: Enable mutual TLS (mTLS) for client authentication
-# client_ca = "/etc/qssh/client-ca.crt"
-# require_mtls = false
-
-[quic]
-max_idle_timeout = 30
-max_incoming_streams = 100
-keep_alive_period = 10
-```
-
-### Running the Server
-
-```bash
-./server -config-file /path/to/config.toml
-```
-
-### Certificate Setup
-
-For production deployment, you'll need TLS certificates. Refer to [generate_certs.sh](testdata/generate_certs.sh)
-
-## Security Considerations
-
-- The default `cmd/client` uses `InsecureSkipVerify: true` for development/testing
-- For production use, implement proper certificate validation using `WithServerCA()`
-- Use mTLS with `WithClientCert()` for enhanced security
-- QSSH acts as a transparent proxy, existing SSH best practices should be followed.

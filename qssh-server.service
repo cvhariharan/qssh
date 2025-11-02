@@ -1,0 +1,13 @@
+[Unit]
+Description=QSSH Server
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+Restart=always
+RestartSec=5
+ExecStart=/usr/local/bin/qssh-server -config-file /etc/qssh-config.toml
+
+[Install]
+WantedBy=multi-user.target

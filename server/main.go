@@ -2,19 +2,25 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"flag"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
+	"math/big"
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
-	"flag"
 
 	"github.com/knadh/koanf/parsers/toml"
 	"github.com/knadh/koanf/providers/file"
@@ -22,18 +28,21 @@ import (
 	"github.com/quic-go/quic-go"
 )
 
+type TLSConfig struct {
+	CertFile      string `koanf:"cert_file"`
+	KeyFile       string `koanf:"key_file"`
+	ClientCA      string `koanf:"client_ca"`
+	RequireMTLS   bool   `koanf:"require_mtls"`
+	GenerateCerts bool   `koanf:"generate_certs"`
+}
+
 type Config struct {
 	Server struct {
 		QuicAddr string `koanf:"quic_addr"`
 		SSHAddr  string `koanf:"ssh_addr"`
 	} `koanf:"server"`
 
-	TLS struct {
-		CertFile   string `koanf:"cert_file"`
-		KeyFile    string `koanf:"key_file"`
-		ClientCA   string `koanf:"client_ca"`
-		RequireMTLS bool   `koanf:"require_mtls"`
-	} `koanf:"tls"`
+	TLS TLSConfig `koanf:"tls"`
 
 	QUIC struct {
 		MaxIdleTimeout     int64 `koanf:"max_idle_timeout"`
@@ -200,12 +209,96 @@ func (s *Server) handleConnection(qConn *quic.Conn) {
 	wg.Wait()
 }
 
-func loadTLSConfig(tlsConfig struct {
-	CertFile   string `koanf:"cert_file"`
-	KeyFile    string `koanf:"key_file"`
-	ClientCA   string `koanf:"client_ca"`
-	RequireMTLS bool   `koanf:"require_mtls"`
-}) (*tls.Config, error) {
+// generateSelfSignedCert creates x509 certificate and private key and writes to the provided cert and key file.
+// The files will be overwritten.
+func generateSelfSignedCert(certFile, keyFile string) error {
+	// Ensure parent directories exist
+	certDir := filepath.Dir(certFile)
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return fmt.Errorf("failed to create certificate directory: %w", err)
+	}
+
+	keyDir := filepath.Dir(keyFile)
+	if err := os.MkdirAll(keyDir, 0755); err != nil {
+		return fmt.Errorf("failed to create key directory: %w", err)
+	}
+
+	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("failed to generate private key: %w", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("failed to generate serial number: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"QUIC SSH Proxy"},
+			CommonName:   "localhost",
+		},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour), // Valid for 1 year
+		KeyUsage:              x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		DNSNames:              []string{"localhost"},
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
+	}
+
+	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate: %w", err)
+	}
+
+	certOut, err := os.Create(certFile)
+	if err != nil {
+		return fmt.Errorf("failed to create certificate file: %w", err)
+	}
+	defer certOut.Close()
+
+	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+		return fmt.Errorf("failed to write certificate to file: %w", err)
+	}
+
+	keyOut, err := os.Create(keyFile)
+	if err != nil {
+		return fmt.Errorf("failed to create key file: %w", err)
+	}
+	defer keyOut.Close()
+
+	privBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	if err := pem.Encode(keyOut, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: privBytes}); err != nil {
+		return fmt.Errorf("failed to write private key to file: %w", err)
+	}
+
+	log.Printf("Generated self-signed certificate: %s and key: %s", certFile, keyFile)
+	return nil
+}
+
+func loadTLSConfig(tlsConfig TLSConfig) (*tls.Config, error) {
+	// Check if certificates exist, generate if needed
+	if tlsConfig.GenerateCerts {
+		certExists := true
+		keyExists := true
+
+		if _, err := os.Stat(tlsConfig.CertFile); os.IsNotExist(err) {
+			certExists = false
+		}
+		if _, err := os.Stat(tlsConfig.KeyFile); os.IsNotExist(err) {
+			keyExists = false
+		}
+
+		if !certExists || !keyExists {
+			log.Printf("Certificates not found, generating self-signed certificates...")
+			if err := generateSelfSignedCert(tlsConfig.CertFile, tlsConfig.KeyFile); err != nil {
+				return nil, fmt.Errorf("failed to generate certificates: %w", err)
+			}
+		}
+	}
+
 	cert, err := tls.LoadX509KeyPair(tlsConfig.CertFile, tlsConfig.KeyFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to load certificate: %w", err)
